@@ -1,0 +1,111 @@
+# Xcode
+#
+# gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+
+## Build generated
+build/
+DerivedData/
+
+## Various settings
+*.pbxuser
+!default.pbxuser
+*mode1v3
+!default.mode1v3
+*mode2v3
+!default.mode2v3
+*perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.mixed
+*.mode
+*~
+.llvm-cache
+##
+# Covers DJV files
+*.djvu
+##
+# Obj-C/Swift specific
+*.hmap
+*.ipa
+*.dylib
+*.framework
+*.gcda
+*.gcno
+*.documents
+##
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Swift Package Manager
+#
+# Add this line if you want to avoid checking in generated files from Swift Package Manager
+.build/
+# Package.pins is generated at swift build or swift package resolve
+Package.pins
+
+# CocoaPods
+#
+# We recommend against adding the Pods directory to your .gitignore. However
+# you should judge for yourself, the pros and cons are mentioned at:
+# https://guides.cocoapods.org/using/using-cocoapods.html#should-i-check-the-pods-directory-into-source-control
+# Pods/
+
+# Carthage
+#
+# Add this line if you want to avoid checking in generated files from Carthage.
+Carthage/Build/
+
+# Fastlane
+#
+# It is recommended to not store the screenshots in the git repo. Instead, use fastlane to re-generate
+# the screenshots whenever they are needed.
+# fastlane/report.xml
+# fastlane/Preview.html
+# fastlane/screenshots
+# fastlane/test_output
+
+# Codemagic
+#
+# https://docs.codemagic.io/getting-started/build-configuration/
+# codemagic.yaml
+
+# AppCode
+# https://www.jetbrains.com/help/idea/copyright-menu-.gitignore-file.html
+.idea/
+*.iml
+
+# Maven
+#
+# Maven/Gradle/Mill based projects
+target/
+pom.xml.tag
+pom.xml.release
+pom.xml.backup
+pom.xml
+release.properties
+# Maven wrapper
+.mvn/
+# Gradle
+#
+# Gradle/Gradle + Maven based projects
+.gradle/
+!gradle/wrapper/gradle-wrapper.properties
+# !gradle/wrapper/gradle-wrapper.jar
+
+# Application data
+*.ipa
+*.dSYM
+*.app
+*.xcarchive
+*.mobileprovision
+*.plist
+*.entitlements
+*.xcworkspace
+*.xcodeproj
+
+# Other
+.DS_Store
+.env
+*.log

@@ -1,0 +1,12 @@
+name: TestDep
+targets:
+  TestFramework:
+    type: framework
+    platform: iOS
+    sources: [TestFramework]
+  TestApp:
+    type: application
+    platform: iOS
+    sources: [TestApp]
+    dependencies:
+      - target: TestFramework

@@ -1,0 +1,14 @@
+name: OtterClone
+targets:
+  OtterCloneKit:
+    type: framework
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources: [OtterCloneKit]
+  OtterCloneiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources: [OtterCloneiOS]
+    dependencies:
+      - target: OtterCloneKit
