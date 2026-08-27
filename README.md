@@ -16,10 +16,14 @@ To generate the project:
 xcodegen generate
 ```
 
-## Sidestore/AltStore Distribution
-The IPA for distribution via Sidestore or AltStore can be found in the `releases` directory.
+## Installing via AltStore / SideStore / Feather
+Add this source URL in AltStore, SideStore, or Feather to install Beaver and get notified of updates:
 
-The `releases.json` file contains the metadata required for Sidestore/AltStore.
+```
+https://raw.githubusercontent.com/mwelford2/BeaverClone/main/apps.json
+```
+
+New versions are published as GitHub Releases with the IPA attached; `apps.json` on `main` is updated to point at each new release.
 
 ## License
 MIT

@@ -1,0 +1,27 @@
+{
+  "name": "Beaver",
+  "identifier": "com.example.beaverclone.altstore-source",
+  "sourceURL": "https://raw.githubusercontent.com/mwelford2/BeaverClone/main/apps.json",
+  "apps": [
+    {
+      "name": "Beaver",
+      "bundleIdentifier": "com.example.beavercloneios",
+      "developerName": "mwelford2",
+      "subtitle": "AI-powered voice notes",
+      "localizedDescription": "A note-taking app with AI-powered transcription, summarization, and iCloud sync.",
+      "iconURL": "https://raw.githubusercontent.com/mwelford2/BeaverClone/main/BeaverCloneiOS/Assets.xcassets/AppIcon.appiconset/icon_1024.png",
+      "tintColor": "6B4226",
+      "category": "productivity",
+      "versions": [
+        {
+          "version": "1.0.2",
+          "date": "2026-08-26",
+          "localizedDescription": "- Tap a note to open its detail view (Summary/Transcript tabs)\n- Tap any transcript word or summary point to seek playback there\n- Word/point highlighting synced to playback\n- Fixed a navigation bug where tapping a note sometimes did nothing\n- Fixed Keychain writes silently failing on ad-hoc/self-signed builds",
+          "downloadURL": "https://github.com/mwelford2/BeaverClone/releases/download/v1.0.2/Beaver.ipa",
+          "size": 1957369,
+          "minOSVersion": "16.0"
+        }
+      ]
+    }
+  ]
+}
