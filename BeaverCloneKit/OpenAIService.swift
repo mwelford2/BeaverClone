@@ -29,7 +29,7 @@ public final class OpenAIService {
     private init() {}
 
     @MainActor
-    public func transcribeAudio(fileURL: URL) async throws -> String {
+    public func transcribeAudio(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
         let apiKey = APIConfig.shared.apiKey
         let model = APIConfig.shared.transcriptionModel ?? "whisper-1"
 
@@ -48,15 +48,23 @@ public final class OpenAIService {
         let boundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
+        func appendField(_ name: String, _ value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)
         body.append(audioData)
         body.append("\r\n".data(using: .utf8)!)
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(model)\r\n".data(using: .utf8)!)
+        appendField("model", model)
+        // Ask for word-level timestamps so playback can highlight the transcript in sync.
+        // Not every OpenAI-compatible endpoint honors these fields — fall back to plain text below.
+        appendField("response_format", "verbose_json")
+        appendField("timestamp_granularities[]", "word")
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         request.httpBody = body
@@ -70,7 +78,16 @@ public final class OpenAIService {
 
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let text = json["text"] as? String {
-            return text
+            var timings: [WordTiming] = []
+            if let words = json["words"] as? [[String: Any]] {
+                timings = words.compactMap { w in
+                    guard let word = w["word"] as? String,
+                          let start = w["start"] as? Double,
+                          let end = w["end"] as? Double else { return nil }
+                    return WordTiming(word: word, start: start, end: end)
+                }
+            }
+            return (text, timings)
         }
 
         throw OpenAIServiceError.invalidData

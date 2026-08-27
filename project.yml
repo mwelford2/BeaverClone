@@ -5,6 +5,8 @@ settings:
   base:
     DEVELOPMENT_TEAM: ""
     SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.2"
+    CURRENT_PROJECT_VERSION: "3"
 targets:
   BeaverCloneKit:
     type: framework
@@ -16,8 +18,8 @@ targets:
     info:
       path: BeaverCloneKit/Info.plist
       properties:
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "com.example.beaverclonekit"
@@ -41,6 +43,8 @@ targets:
       path: BeaverCloneiOS/Info.plist
       properties:
         CFBundleDisplayName: "Beaver"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSMicrophoneUsageDescription: "Beaver needs microphone access to record and transcribe your notes."
         NSSpeechRecognitionUsageDescription: "Beaver uses speech recognition to transcribe your recordings."
         UILaunchScreen: {}
@@ -61,6 +65,8 @@ targets:
         com.apple.developer.icloud-services:
           - CloudKit
         com.apple.developer.ubiquity-kvstore-identifier: "$(TeamIdentifierPrefix)com.example.beaverclone"
+        keychain-access-groups:
+          - "$(AppIdentifierPrefix)com.example.beavercloneios"
     settings:
       base:
         INFOPLIST_FILE: BeaverCloneiOS/Info.plist
@@ -83,6 +89,8 @@ targets:
       path: BeaverCloneMac/Info.plist
       properties:
         CFBundleDisplayName: "Beaver"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSMicrophoneUsageDescription: "Beaver needs microphone access to record and transcribe your notes."
         NSSpeechRecognitionUsageDescription: "Beaver uses speech recognition to transcribe your recordings."
         LSMinimumSystemVersion: "13.0"
@@ -98,6 +106,8 @@ targets:
         com.apple.developer.icloud-services:
           - CloudKit
         com.apple.developer.ubiquity-kvstore-identifier: "$(TeamIdentifierPrefix)com.example.beaverclone"
+        keychain-access-groups:
+          - "$(AppIdentifierPrefix)com.example.beaverclonemac"
     settings:
       base:
         INFOPLIST_FILE: BeaverCloneMac/Info.plist
@@ -108,11 +118,31 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         COMBINE_HIDPI_IMAGES: YES
 
+  BeaverCloneUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources: [BeaverCloneUITests]
+    dependencies:
+      - target: BeaverCloneiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.beavercloneuitests"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        TEST_TARGET_NAME: BeaverCloneiOS
+
 schemes:
   BeaverCloneiOS:
     build:
       targets:
         BeaverCloneiOS: all
+        BeaverCloneUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - BeaverCloneUITests
     run:
       config: Debug
   BeaverCloneMac:

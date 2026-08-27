@@ -55,6 +55,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
         currentTime = time
     }
 
+    public func seekAndPlay(to time: TimeInterval) {
+        seek(to: time)
+        if !isPlaying {
+            play()
+        }
+    }
+
     public func stop() {
         player?.stop()
         isPlaying = false

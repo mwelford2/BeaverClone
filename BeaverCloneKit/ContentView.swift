@@ -1,4 +1,7 @@
 import SwiftUI
+#if DEBUG
+import AVFoundation
+#endif
 
 public struct ContentView: View {
     @StateObject private var noteStore = NoteStore()
@@ -7,63 +10,33 @@ public struct ContentView: View {
     @State private var isProcessingNewNote = false
     @State private var processingError: String?
     @State private var selectedNote: Note?
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
 
     public init() {}
 
     public var body: some View {
-        NavigationSplitView {
-            ZStack(alignment: .bottom) {
-                BeaverTheme.groupedBackground.ignoresSafeArea()
-
-                Group {
-                    if noteStore.notes.isEmpty {
-                        emptyState
-                    } else {
-                        ScrollView {
-                            LazyVStack(spacing: 12) {
-                                ForEach(noteStore.notes) { note in
-                                    Button {
-                                        selectedNote = note
-                                    } label: {
-                                        NoteCard(note: note, isSelected: selectedNote?.id == note.id)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button("Delete", role: .destructive) {
-                                            noteStore.deleteNote(note)
-                                        }
-                                    }
-                                }
-                            }
-                            .padding()
-                            .padding(.bottom, 90)
+        Group {
+            #if os(iOS)
+            if horizontalSizeClass == .compact {
+                // NavigationSplitView's sidebar->detail push is unreliable on compact-width
+                // iOS 16 (the app's minimum target) — navigationDestination attached to the
+                // detail column silently never fires. A plain NavigationStack, where the
+                // destination lives directly in the same stack as the pushing NavigationLink,
+                // doesn't have that bug and is what iPhone needs anyway (single column).
+                NavigationStack {
+                    listContent
+                        .navigationDestination(for: Note.self) { note in
+                            NoteDetailView(noteStore: noteStore, note: note)
                         }
-                    }
                 }
-
-                recordFAB
-                    .padding(.bottom, 24)
-            }
-            .navigationTitle("Notes")
-            .toolbar {
-                ToolbarItem {
-                    Button(action: { showingSettings = true }) {
-                        Label("Settings", systemImage: "gearshape")
-                    }
-                }
-            }
-        } detail: {
-            if let selectedNote {
-                NoteDetailView(noteStore: noteStore, note: selectedNote)
             } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "note.text")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.tertiary)
-                    Text("Select a note")
-                        .foregroundStyle(.secondary)
-                }
+                splitView
             }
+            #else
+            splitView
+            #endif
         }
         .tint(BeaverTheme.accent)
         .sheet(isPresented: $showingSettings) {
@@ -85,6 +58,83 @@ public struct ContentView: View {
             }
         }
         .animation(.default, value: audioRecorder.isRecording)
+    }
+
+    private var splitView: some View {
+        NavigationSplitView {
+            listContent
+        } detail: {
+            if let selectedNote {
+                NoteDetailView(noteStore: noteStore, note: selectedNote)
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.tertiary)
+                    Text("Select a note")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var listContent: some View {
+        ZStack(alignment: .bottom) {
+            BeaverTheme.groupedBackground.ignoresSafeArea()
+
+            Group {
+                if noteStore.notes.isEmpty {
+                    emptyState
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(noteStore.notes) { note in
+                                NavigationLink(value: note) {
+                                    NoteCard(note: note, isSelected: selectedNote?.id == note.id)
+                                }
+                                .buttonStyle(.plain)
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    selectedNote = note
+                                })
+                                .contextMenu {
+                                    Button("Delete", role: .destructive) {
+                                        noteStore.deleteNote(note)
+                                    }
+                                }
+                            }
+                        }
+                        .padding()
+                        .padding(.bottom, 90)
+                    }
+                }
+            }
+
+            recordFAB
+                .padding(.bottom, 24)
+        }
+        .navigationTitle("Notes")
+        .toolbar {
+            #if DEBUG
+            ToolbarItem {
+                Button("Seed") {
+                    let fileName = Self.writeSilentAudioFile(duration: 4.0)
+                    let note = Note(
+                        title: "Debug Seed Note",
+                        summary: "First point.\nSecond point.",
+                        transcript: "This is a test transcript.",
+                        audioFileName: fileName,
+                        duration: 4.0
+                    )
+                    noteStore.addNote(note)
+                }
+            }
+            #endif
+            ToolbarItem {
+                Button(action: { showingSettings = true }) {
+                    Label("Settings", systemImage: "gearshape")
+                }
+            }
+        }
     }
 
     private var emptyState: some View {
@@ -140,13 +190,14 @@ public struct ContentView: View {
         Task {
             do {
                 let audioURL = AudioFileStore.shared.url(for: result.fileName)
-                let transcript = try await OpenAIService.shared.transcribeAudio(fileURL: audioURL)
+                let (transcript, wordTimings) = try await OpenAIService.shared.transcribeAudio(fileURL: audioURL)
 
                 var note = Note(
                     title: "New Recording",
                     transcript: transcript,
                     audioFileName: result.fileName,
-                    duration: result.duration
+                    duration: result.duration,
+                    wordTimings: wordTimings
                 )
 
                 if let summarized = try? await OpenAIService.shared.summarize(transcript: transcript) {
@@ -168,6 +219,26 @@ public struct ContentView: View {
             }
         }
     }
+
+    #if DEBUG
+    /// Writes a silent .m4a of the given duration so debug-seeded notes have real playable
+    /// audio (needed for playback controls / tap-to-seek to render and be testable via XCUITest).
+    private static func writeSilentAudioFile(duration: TimeInterval) -> String {
+        let fileName = "\(UUID().uuidString).m4a"
+        let url = AudioFileStore.shared.url(for: fileName)
+
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
+        guard let file = try? AVAudioFile(forWriting: url, settings: format.settings) else {
+            return fileName
+        }
+        let frameCount = AVAudioFrameCount(duration * format.sampleRate)
+        if let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) {
+            buffer.frameLength = frameCount
+            try? file.write(from: buffer)
+        }
+        return fileName
+    }
+    #endif
 }
 
 private struct NoteCard: View {

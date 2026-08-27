@@ -19,8 +19,15 @@ public final class APIConfig: ObservableObject {
         static let chatModel = "chatModel"
     }
 
+    /// Set by the apiKey didSet whenever a write to the Keychain is attempted, so callers
+    /// (Settings UI) can tell the user when persistence actually failed instead of assuming success.
+    @Published public private(set) var apiKeySaveFailed = false
+
     @Published public var apiKey: String {
-        didSet { KeychainStore.shared.write(key: Keys.apiKey, value: apiKey) }
+        didSet {
+            let succeeded = KeychainStore.shared.write(key: Keys.apiKey, value: apiKey)
+            apiKeySaveFailed = !succeeded && !apiKey.isEmpty
+        }
     }
 
     @Published public var baseURL: String {

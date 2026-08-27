@@ -1,5 +1,17 @@
 import Foundation
 
+public struct WordTiming: Codable, Equatable, Hashable {
+    public var word: String
+    public var start: TimeInterval
+    public var end: TimeInterval
+
+    public init(word: String, start: TimeInterval, end: TimeInterval) {
+        self.word = word
+        self.start = start
+        self.end = end
+    }
+}
+
 public struct Note: Identifiable, Codable, Equatable, Hashable {
     public let id: UUID
     public var title: String
@@ -10,6 +22,9 @@ public struct Note: Identifiable, Codable, Equatable, Hashable {
     public var modifiedDate: Date
     public var audioFileName: String?
     public var duration: TimeInterval
+    /// Per-word timestamps from transcription, when the endpoint supports `timestamp_granularities=word`.
+    /// Empty when unavailable — transcript highlighting then falls back to proportional timing.
+    public var wordTimings: [WordTiming]
 
     public init(
         id: UUID = UUID(),
@@ -20,7 +35,8 @@ public struct Note: Identifiable, Codable, Equatable, Hashable {
         date: Date = Date(),
         modifiedDate: Date = Date(),
         audioFileName: String? = nil,
-        duration: TimeInterval = 0
+        duration: TimeInterval = 0,
+        wordTimings: [WordTiming] = []
     ) {
         self.id = id
         self.title = title
@@ -31,6 +47,7 @@ public struct Note: Identifiable, Codable, Equatable, Hashable {
         self.modifiedDate = modifiedDate
         self.audioFileName = audioFileName
         self.duration = duration
+        self.wordTimings = wordTimings
     }
 
     public var displayTitle: String {
