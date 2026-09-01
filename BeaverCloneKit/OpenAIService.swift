@@ -153,11 +153,10 @@ public final class OpenAIService {
 
         for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.uppercased().hasPrefix("TITLE:") {
-                title = String(trimmed.dropFirst("TITLE:".count)).trimmingCharacters(in: .whitespaces)
+            if let rest = Self.stripLabel("TITLE", from: trimmed) {
+                title = rest
                 inSummary = false
-            } else if trimmed.uppercased().hasPrefix("SUMMARY:") {
-                let rest = String(trimmed.dropFirst("SUMMARY:".count)).trimmingCharacters(in: .whitespaces)
+            } else if let rest = Self.stripLabel("SUMMARY", from: trimmed) {
                 if !rest.isEmpty { summaryLines.append(rest) }
                 inSummary = true
             } else if inSummary {
@@ -167,5 +166,63 @@ public final class OpenAIService {
 
         let summary = summaryLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         return (summary.isEmpty ? content : summary, title)
+    }
+
+    /// Matches a line like "TITLE: foo" while tolerating the formatting variance models
+    /// commonly produce despite being asked for a plain "LABEL:" prefix — markdown bold/heading
+    /// markers, list bullets/numbering, and a colon/dash/space separator instead of just ":".
+    /// Returns the trimmed remainder after the label if `line` starts with `label` (after
+    /// stripping that decoration), or nil if it doesn't match at all.
+    private static func stripLabel(_ label: String, from line: String) -> String? {
+        var remaining = Substring(line)
+
+        // Strip leading list markers: "-", "*", "1.", "1)".
+        while let first = remaining.first, first == "-" || first == "*" || first == "#" {
+            remaining = remaining.dropFirst()
+        }
+        remaining = remaining.drop { $0.isWhitespace }
+        if let dotIndex = remaining.firstIndex(where: { $0 == "." || $0 == ")" }),
+           remaining[remaining.startIndex..<dotIndex].allSatisfy({ $0.isNumber }),
+           remaining.startIndex != dotIndex {
+            remaining = remaining[remaining.index(after: dotIndex)...]
+        }
+        remaining = remaining.drop { $0.isWhitespace }
+
+        // Strip markdown emphasis wrapping the label itself, e.g. "**TITLE:**" or "__TITLE__".
+        for marker in ["**", "__"] {
+            if remaining.hasPrefix(marker) {
+                remaining = remaining.dropFirst(marker.count)
+            }
+        }
+
+        guard remaining.uppercased().hasPrefix(label.uppercased()) else { return nil }
+        remaining = remaining.dropFirst(label.count)
+
+        // Allow closing emphasis markers right after the label: "TITLE**:" or "TITLE:**".
+        for marker in ["**", "__"] {
+            if remaining.hasPrefix(marker) {
+                remaining = remaining.dropFirst(marker.count)
+            }
+        }
+
+        remaining = remaining.drop { $0.isWhitespace }
+        guard let separator = remaining.first, separator == ":" || separator == "-" || separator == "\u{2014}" else {
+            return nil
+        }
+        remaining = remaining.dropFirst()
+
+        for marker in ["**", "__"] {
+            if remaining.hasPrefix(marker) {
+                remaining = remaining.dropFirst(marker.count)
+            }
+        }
+
+        var result = remaining.trimmingCharacters(in: .whitespaces)
+        for marker in ["**", "__"] {
+            if result.hasSuffix(marker) {
+                result = String(result.dropLast(marker.count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return result
     }
 }
