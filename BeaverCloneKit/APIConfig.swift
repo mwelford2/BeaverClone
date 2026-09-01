@@ -1,5 +1,8 @@
 import Foundation
 import Combine
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
 public final class APIConfig: ObservableObject {
@@ -10,6 +13,10 @@ public final class APIConfig: ObservableObject {
         baseURL = UserDefaults.standard.string(forKey: Keys.baseURL) ?? "https://api.openai.com/v1"
         transcriptionModel = UserDefaults.standard.string(forKey: Keys.transcriptionModel)
         chatModel = UserDefaults.standard.string(forKey: Keys.chatModel)
+        keepScreenAwake = UserDefaults.standard.bool(forKey: Keys.keepScreenAwake)
+        #if os(iOS)
+        UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
+        #endif
     }
 
     private enum Keys {
@@ -17,6 +24,7 @@ public final class APIConfig: ObservableObject {
         static let baseURL = "baseURL"
         static let transcriptionModel = "transcriptionModel"
         static let chatModel = "chatModel"
+        static let keepScreenAwake = "keepScreenAwake"
     }
 
     /// Set by the apiKey didSet whenever a write to the Keychain is attempted, so callers
@@ -49,6 +57,18 @@ public final class APIConfig: ObservableObject {
 
     @Published public var chatModel: String? {
         didSet { UserDefaults.standard.set(chatModel, forKey: Keys.chatModel) }
+    }
+
+    /// When true, prevents the device from auto-locking/sleeping while the app is in the
+    /// foreground — useful for long recordings. iOS only; no-op on macOS, which doesn't
+    /// sleep the display just because an app window is open.
+    @Published public var keepScreenAwake: Bool {
+        didSet {
+            UserDefaults.standard.set(keepScreenAwake, forKey: Keys.keepScreenAwake)
+            #if os(iOS)
+            UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
+            #endif
+        }
     }
 
     public var isConfigured: Bool {

@@ -5,8 +5,8 @@ settings:
   base:
     DEVELOPMENT_TEAM: ""
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.0.2"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "1.0.3"
+    CURRENT_PROJECT_VERSION: "4"
 targets:
   BeaverCloneKit:
     type: framework

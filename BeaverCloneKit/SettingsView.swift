@@ -75,6 +75,14 @@ public struct SettingsView: View {
                     }
                 }
 
+                #if os(iOS)
+                Section {
+                    Toggle("Keep Screen Awake", isOn: $config.keepScreenAwake)
+                } footer: {
+                    Text("Prevents your device from auto-locking while the app is open.")
+                }
+                #endif
+
                 if !config.models.isEmpty {
                     Section {
                         Picker("Transcription Model", selection: $config.transcriptionModel) {
