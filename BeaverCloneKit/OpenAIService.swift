@@ -26,16 +26,66 @@ public enum OpenAIServiceError: LocalizedError {
 public final class OpenAIService {
     public static let shared = OpenAIService()
 
-    private init() {}
+    /// Long meetings get split into chunks no longer than this before upload. Keeping each
+    /// request to a bounded slice of the recording avoids OpenAI's 25MB per-request file size
+    /// cap and keeps each individual upload/transcribe round trip short enough that it doesn't
+    /// stall out against the session timeout below.
+    private static let maxChunkDuration: TimeInterval = 10 * 60
 
+    private let session: URLSession
+
+    private init() {
+        let config = URLSessionConfiguration.default
+        // Whisper can take several minutes to transcribe a long chunk with no bytes flowing in
+        // either direction in the meantime; URLSession's default 60s idle-request timeout kills
+        // that request before a response ever arrives. Give it more room.
+        config.timeoutIntervalForRequest = 300
+        config.timeoutIntervalForResource = 600
+        session = URLSession(configuration: config)
+    }
+
+    /// Transcribes `fileURL`, transparently splitting long recordings into consecutive chunks
+    /// so no single upload is large or slow enough to time out. `progress` (called on the main
+    /// actor) reports 1-based chunk completion as `(completed, total)`; `total` is 1 for
+    /// recordings short enough to send in a single request.
     @MainActor
-    public func transcribeAudio(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
-        let apiKey = APIConfig.shared.apiKey
-        let model = APIConfig.shared.transcriptionModel ?? "whisper-1"
-
+    public func transcribeAudio(
+        fileURL: URL,
+        progress: (@MainActor (_ completed: Int, _ total: Int) -> Void)? = nil
+    ) async throws -> (text: String, wordTimings: [WordTiming]) {
         guard APIConfig.shared.isConfigured else {
             throw OpenAIServiceError.notConfigured
         }
+
+        let chunks = try await AudioSplitter.split(sourceURL: fileURL, maxChunkDuration: Self.maxChunkDuration)
+        defer {
+            // Never delete the caller's original recording — only the temp chunk files we made.
+            for chunk in chunks where chunk.url != fileURL {
+                try? FileManager.default.removeItem(at: chunk.url)
+            }
+        }
+
+        var combinedText: [String] = []
+        var combinedTimings: [WordTiming] = []
+
+        for (index, chunk) in chunks.enumerated() {
+            let (text, timings) = try await transcribeChunk(fileURL: chunk.url)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { combinedText.append(trimmed) }
+            combinedTimings.append(contentsOf: timings.map {
+                WordTiming(word: $0.word, start: $0.start + chunk.startTime, end: $0.end + chunk.startTime)
+            })
+            progress?(index + 1, chunks.count)
+        }
+
+        return (combinedText.joined(separator: " "), combinedTimings)
+    }
+
+    @MainActor
+    private func transcribeChunk(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
+        let apiKey = APIConfig.shared.apiKey
+        let model = APIConfig.shared.transcriptionModel ?? "whisper-1"
+
         guard let url = APIConfig.shared.normalizedURL(path: "audio/transcriptions") else {
             throw OpenAIServiceError.invalidURL
         }
@@ -69,7 +119,7 @@ public final class OpenAIService {
 
         request.httpBody = body
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -129,7 +179,7 @@ public final class OpenAIService {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1

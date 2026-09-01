@@ -8,6 +8,7 @@ public struct ContentView: View {
     @StateObject private var audioRecorder = AudioRecorder()
     @State private var showingSettings = false
     @State private var isProcessingNewNote = false
+    @State private var processingStatusText: String?
     @State private var processingError: String?
     @State private var selectedNote: Note?
     #if os(iOS)
@@ -53,7 +54,7 @@ public struct ContentView: View {
                     .padding()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if isProcessingNewNote {
-                ProcessingBanner()
+                ProcessingBanner(statusText: processingStatusText ?? "Transcribing and summarizing…")
                     .padding()
             }
         }
@@ -186,11 +187,14 @@ public struct ContentView: View {
     private func finishRecording() {
         guard let result = audioRecorder.stopRecording() else { return }
         isProcessingNewNote = true
+        processingStatusText = nil
 
         Task {
             do {
                 let audioURL = AudioFileStore.shared.url(for: result.fileName)
-                let (transcript, wordTimings) = try await OpenAIService.shared.transcribeAudio(fileURL: audioURL)
+                let (transcript, wordTimings) = try await OpenAIService.shared.transcribeAudio(fileURL: audioURL) { completed, total in
+                    processingStatusText = total > 1 ? "Transcribing part \(completed) of \(total)…" : nil
+                }
 
                 var note = Note(
                     title: "New Recording",
@@ -210,11 +214,13 @@ public struct ContentView: View {
                 await MainActor.run {
                     noteStore.addNote(note)
                     isProcessingNewNote = false
+                    processingStatusText = nil
                 }
             } catch {
                 await MainActor.run {
                     processingError = error.localizedDescription
                     isProcessingNewNote = false
+                    processingStatusText = nil
                 }
             }
         }
@@ -316,10 +322,12 @@ private struct RecordingBanner: View {
 }
 
 private struct ProcessingBanner: View {
+    var statusText: String
+
     var body: some View {
         HStack {
             ProgressView()
-            Text("Transcribing and summarizing…")
+            Text(statusText)
                 .font(.subheadline)
                 .foregroundStyle(BeaverTheme.navy)
         }
