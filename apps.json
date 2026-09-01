@@ -14,11 +14,11 @@
       "category": "productivity",
       "versions": [
         {
-          "version": "1.0.3",
+          "version": "1.0.4",
           "date": "2026-09-01",
-          "localizedDescription": "- Add Keep Screen Awake setting — prevents device auto-lock while the app is open",
-          "downloadURL": "https://github.com/mwelford2/BeaverClone/releases/download/v1.0.3/Beaver.ipa",
-          "size": 3917287,
+          "localizedDescription": "- Fixed AI-generated titles sometimes not being picked up due to formatting variance\n- Fixed a broken v1.0.3 build so Keep Screen Awake actually ships\n- Keep Screen Awake setting — prevents device auto-lock while the app is open",
+          "downloadURL": "https://github.com/mwelford2/BeaverClone/releases/download/v1.0.4/Beaver.ipa",
+          "size": 1961097,
           "minOSVersion": "16.0"
         },
         {
