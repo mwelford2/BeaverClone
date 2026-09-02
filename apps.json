@@ -14,6 +14,14 @@
       "category": "productivity",
       "versions": [
         {
+          "version": "1.1.0",
+          "date": "2026-09-02",
+          "localizedDescription": "- Live transcription while recording, in short segments cut at pauses in speech\n- Live notes: AI summary/title update roughly every 30s during recording, viewable by tapping the recording banner\n- Recording is now blocked with a prompt to Settings if no API key is configured\n- If transcription fails mid-recording, audio is still saved instead of lost",
+          "downloadURL": "https://github.com/mwelford2/BeaverClone/releases/download/v1.1.0/Beaver.ipa",
+          "size": 2000241,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.4",
           "date": "2026-09-01",
           "localizedDescription": "- Fixed AI-generated titles sometimes not being picked up due to formatting variance\n- Fixed a broken v1.0.3 build so Keep Screen Awake actually ships\n- Keep Screen Awake setting — prevents device auto-lock while the app is open",
