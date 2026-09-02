@@ -5,8 +5,11 @@ import AVFoundation
 
 public struct ContentView: View {
     @StateObject private var noteStore = NoteStore()
-    @StateObject private var audioRecorder = AudioRecorder()
+    @StateObject private var recordingSession = LiveRecordingSession()
+    @ObservedObject private var apiConfig = APIConfig.shared
     @State private var showingSettings = false
+    @State private var showingLiveNote = false
+    @State private var showingNotConfiguredAlert = false
     @State private var isProcessingNewNote = false
     @State private var processingError: String?
     @State private var selectedNote: Note?
@@ -42,14 +45,28 @@ public struct ContentView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
+        .sheet(isPresented: $showingLiveNote) {
+            LiveNoteView(session: recordingSession)
+        }
         .alert("Couldn't process recording", isPresented: .constant(processingError != nil), actions: {
             Button("OK") { processingError = nil }
         }, message: {
             Text(processingError ?? "")
         })
+        .alert("Set up your API connection first", isPresented: $showingNotConfiguredAlert, actions: {
+            Button("Open Settings") { showingSettings = true }
+            Button("Cancel", role: .cancel) {}
+        }, message: {
+            Text("Beaver needs an API key and base URL to transcribe recordings. Add them in Settings before recording.")
+        })
         .overlay(alignment: .bottom) {
-            if audioRecorder.isRecording {
-                RecordingBanner(recorder: audioRecorder, onStop: finishRecording, onCancel: audioRecorder.cancelRecording)
+            if recordingSession.isRecording {
+                RecordingBanner(
+                    session: recordingSession,
+                    onStop: finishRecording,
+                    onCancel: recordingSession.cancelRecording,
+                    onOpenLiveNote: { showingLiveNote = true }
+                )
                     .padding()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if isProcessingNewNote {
@@ -57,7 +74,7 @@ public struct ContentView: View {
                     .padding()
             }
         }
-        .animation(.default, value: audioRecorder.isRecording)
+        .animation(.default, value: recordingSession.isRecording)
     }
 
     private var splitView: some View {
@@ -163,10 +180,10 @@ public struct ContentView: View {
         Button(action: toggleRecording) {
             ZStack {
                 Circle()
-                    .fill(audioRecorder.isRecording ? Color.red : BeaverTheme.accent)
+                    .fill(recordingSession.isRecording ? Color.red : BeaverTheme.accent)
                     .frame(width: 64, height: 64)
-                    .shadow(color: (audioRecorder.isRecording ? Color.red : BeaverTheme.accent).opacity(0.35), radius: 10, y: 4)
-                Image(systemName: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
+                    .shadow(color: (recordingSession.isRecording ? Color.red : BeaverTheme.accent).opacity(0.35), radius: 10, y: 4)
+                Image(systemName: recordingSession.isRecording ? "stop.fill" : "mic.fill")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.white)
             }
@@ -176,44 +193,29 @@ public struct ContentView: View {
     }
 
     private func toggleRecording() {
-        if audioRecorder.isRecording {
+        if recordingSession.isRecording {
             finishRecording()
+        } else if !apiConfig.isConfigured {
+            showingNotConfiguredAlert = true
         } else {
-            audioRecorder.startRecording()
+            recordingSession.startRecording()
         }
     }
 
     private func finishRecording() {
-        guard let result = audioRecorder.stopRecording() else { return }
         isProcessingNewNote = true
 
         Task {
-            do {
-                let audioURL = AudioFileStore.shared.url(for: result.fileName)
-                let (transcript, wordTimings) = try await OpenAIService.shared.transcribeAudio(fileURL: audioURL)
-
-                var note = Note(
-                    title: "New Recording",
-                    transcript: transcript,
-                    audioFileName: result.fileName,
-                    duration: result.duration,
-                    wordTimings: wordTimings
-                )
-
-                if let summarized = try? await OpenAIService.shared.summarize(transcript: transcript) {
-                    note.summary = summarized.summary
-                    if !summarized.title.isEmpty {
-                        note.title = summarized.title
+            if let result = await recordingSession.finishRecording() {
+                await MainActor.run {
+                    noteStore.addNote(result.note)
+                    isProcessingNewNote = false
+                    if result.transcriptionFailed {
+                        processingError = "Saved the recording's audio, but couldn't reach the transcription service, so there's no transcript or summary — check your API settings in Settings."
                     }
                 }
-
+            } else {
                 await MainActor.run {
-                    noteStore.addNote(note)
-                    isProcessingNewNote = false
-                }
-            } catch {
-                await MainActor.run {
-                    processingError = error.localizedDescription
                     isProcessingNewNote = false
                 }
             }
@@ -284,23 +286,51 @@ private struct NoteCard: View {
 }
 
 private struct RecordingBanner: View {
-    @ObservedObject var recorder: AudioRecorder
+    @ObservedObject var session: LiveRecordingSession
     let onStop: () -> Void
     let onCancel: () -> Void
+    let onOpenLiveNote: () -> Void
+
+    /// Last few words of the live transcript, so the banner reads like a ticker rather than
+    /// growing without bound.
+    private var transcriptTail: String {
+        let words = session.liveTranscript.split(separator: " ")
+        let tail = words.suffix(14)
+        return tail.isEmpty ? "" : "…" + tail.joined(separator: " ")
+    }
 
     var body: some View {
-        HStack {
-            Circle()
-                .fill(Color.red)
-                .frame(width: 10, height: 10)
-            Text(formattedTime(recorder.elapsedTime))
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(BeaverTheme.navy)
-            Spacer()
-            Button("Cancel", role: .destructive, action: onCancel)
-            Button("Done", action: onStop)
-                .buttonStyle(.borderedProminent)
-                .tint(BeaverTheme.accent)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 10, height: 10)
+                Text(formattedTime(session.elapsedTime))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(BeaverTheme.navy)
+                Spacer()
+                Button("Cancel", role: .destructive, action: onCancel)
+                Button("Done", action: onStop)
+                    .buttonStyle(.borderedProminent)
+                    .tint(BeaverTheme.accent)
+            }
+
+            if !transcriptTail.isEmpty {
+                Button(action: onOpenLiveNote) {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "text.alignleft")
+                            .font(.caption)
+                        Text(transcriptTail)
+                            .font(.caption)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+                .animation(.default, value: transcriptTail)
+            }
         }
         .padding()
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: BeaverTheme.pillCornerRadius))

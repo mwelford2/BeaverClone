@@ -30,6 +30,14 @@ public final class OpenAIService {
 
     @MainActor
     public func transcribeAudio(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
+        try await transcribe(fileURL: fileURL)
+    }
+
+    /// Transcribes a single audio file — used both for the whole recording and, for live
+    /// transcription, for one short segment at a time. Word timings returned are relative to
+    /// the start of `fileURL` itself; callers stitching segments together must offset them.
+    @MainActor
+    public func transcribe(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
         let apiKey = APIConfig.shared.apiKey
         let model = APIConfig.shared.transcriptionModel ?? "whisper-1"
 
