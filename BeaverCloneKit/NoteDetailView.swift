@@ -2,10 +2,15 @@ import SwiftUI
 
 public struct NoteDetailView: View {
     @ObservedObject var noteStore: NoteStore
+    /// Non-nil only while this note is the one currently being live-recorded — drives the
+    /// "recording" indicator and is where live updates come from instead of noteStore, since
+    /// LiveRecordingSession updates the store asynchronously per segment and this avoids a
+    /// visible lag waiting on Core Data's fetch-and-republish round trip.
+    var liveSession: LiveRecordingSession?
     @StateObject private var player = AudioPlayer()
     @State private var note: Note
     @State private var showingEditSheet = false
-    @State private var selectedTab: Tab = .summary
+    @State private var selectedTab: Tab
 
     private enum Tab: String, CaseIterable, Identifiable {
         case summary = "Summary"
@@ -14,14 +19,45 @@ public struct NoteDetailView: View {
         var id: String { rawValue }
     }
 
-    public init(noteStore: NoteStore, note: Note) {
+    public init(noteStore: NoteStore, note: Note, liveSession: LiveRecordingSession? = nil, initialTab: InitialTab = .summary) {
         self.noteStore = noteStore
+        self.liveSession = liveSession
         _note = State(initialValue: note)
+        _selectedTab = State(initialValue: initialTab == .transcript ? .transcript : .summary)
+    }
+
+    /// Public, opaque alternative to the private Tab enum so callers outside this file can pick
+    /// a starting tab (e.g. jumping straight to Transcript when opening a note being recorded).
+    public enum InitialTab {
+        case summary
+        case transcript
+    }
+
+    private var isLive: Bool {
+        guard let liveSession else { return false }
+        return liveSession.isRecording && liveSession.noteID == note.id
+    }
+
+    private var displayTranscript: String {
+        isLive ? (liveSession?.liveTranscript ?? note.transcript) : note.transcript
+    }
+
+    private var displaySummary: String {
+        isLive ? (liveSession?.liveSummary ?? note.summary) : note.summary
+    }
+
+    private var displayTitle: String {
+        guard isLive, let liveSession, !liveSession.liveTitle.isEmpty else { return note.displayTitle }
+        return liveSession.liveTitle
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            if let fileName = note.audioFileName {
+            if isLive {
+                liveBanner
+            }
+
+            if let fileName = note.audioFileName, !isLive {
                 PlaybackControls(player: player, fileName: fileName)
                     .padding()
                     .background(BeaverTheme.cardBackground)
@@ -40,9 +76,13 @@ public struct NoteDetailView: View {
                 Group {
                     switch selectedTab {
                     case .summary:
-                        SummaryHighlightView(summary: note.summary, player: player)
+                        SummaryHighlightView(summary: displaySummary, player: player)
                     case .transcript:
-                        TranscriptHighlightView(note: note, player: player)
+                        if isLive {
+                            LiveTranscriptText(text: displayTranscript)
+                        } else {
+                            TranscriptHighlightView(note: note, player: player)
+                        }
                     case .notes:
                         Text(note.content.isEmpty ? "Nothing here yet." : note.content)
                             .font(.body)
@@ -54,11 +94,13 @@ public struct NoteDetailView: View {
             }
         }
         .background(BeaverTheme.groupedBackground.ignoresSafeArea())
-        .navigationTitle(note.displayTitle)
+        .navigationTitle(displayTitle)
         .toolbar {
-            ToolbarItem {
-                Button(action: { showingEditSheet = true }) {
-                    Label("Edit", systemImage: "square.and.pencil")
+            if !isLive {
+                ToolbarItem {
+                    Button(action: { showingEditSheet = true }) {
+                        Label("Edit", systemImage: "square.and.pencil")
+                    }
                 }
             }
         }
@@ -69,12 +111,54 @@ public struct NoteDetailView: View {
             }
         }
         .onAppear {
-            if let fileName = note.audioFileName {
+            if let fileName = note.audioFileName, !isLive {
                 player.load(fileName: fileName)
             }
         }
         .onDisappear {
             player.stop()
+        }
+        // The store re-publishes from Core Data on every save (including the periodic saves
+        // LiveRecordingSession makes while this note is recording); pick up the latest copy of
+        // this specific note so edits made elsewhere, and the final post-recording save, show up.
+        .onChange(of: noteStore.notes) { notes in
+            if let updated = notes.first(where: { $0.id == note.id }) {
+                note = updated
+            }
+        }
+    }
+
+    private var liveBanner: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 8, height: 8)
+            Text(liveSession?.isFinalizing == true ? "Finalizing…" : "Recording — updates live")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+    }
+}
+
+/// Plain live-transcript text while recording — no per-word tap-to-seek (there's no finished,
+/// seekable audio file yet) or duration-based highlighting, unlike TranscriptHighlightView.
+private struct LiveTranscriptText: View {
+    let text: String
+
+    var body: some View {
+        if text.isEmpty {
+            Text("Transcript will appear here as you talk.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(.default, value: text)
         }
     }
 }

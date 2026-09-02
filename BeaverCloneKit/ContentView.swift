@@ -4,20 +4,24 @@ import AVFoundation
 #endif
 
 public struct ContentView: View {
-    @StateObject private var noteStore = NoteStore()
-    @StateObject private var recordingSession = LiveRecordingSession()
+    @StateObject private var noteStore: NoteStore
+    @StateObject private var recordingSession: LiveRecordingSession
     @ObservedObject private var apiConfig = APIConfig.shared
     @State private var showingSettings = false
-    @State private var showingLiveNote = false
     @State private var showingNotConfiguredAlert = false
     @State private var isProcessingNewNote = false
     @State private var processingError: String?
     @State private var selectedNote: Note?
+    @State private var navigationPath = NavigationPath()
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
 
-    public init() {}
+    public init() {
+        let store = NoteStore()
+        _noteStore = StateObject(wrappedValue: store)
+        _recordingSession = StateObject(wrappedValue: LiveRecordingSession(noteStore: store))
+    }
 
     public var body: some View {
         Group {
@@ -28,10 +32,10 @@ public struct ContentView: View {
                 // detail column silently never fires. A plain NavigationStack, where the
                 // destination lives directly in the same stack as the pushing NavigationLink,
                 // doesn't have that bug and is what iPhone needs anyway (single column).
-                NavigationStack {
+                NavigationStack(path: $navigationPath) {
                     listContent
                         .navigationDestination(for: Note.self) { note in
-                            NoteDetailView(noteStore: noteStore, note: note)
+                            NoteDetailView(noteStore: noteStore, note: note, liveSession: recordingSession)
                         }
                 }
             } else {
@@ -44,9 +48,6 @@ public struct ContentView: View {
         .tint(BeaverTheme.accent)
         .sheet(isPresented: $showingSettings) {
             SettingsView()
-        }
-        .sheet(isPresented: $showingLiveNote) {
-            LiveNoteView(session: recordingSession)
         }
         .alert("Couldn't process recording", isPresented: .constant(processingError != nil), actions: {
             Button("OK") { processingError = nil }
@@ -64,8 +65,7 @@ public struct ContentView: View {
                 RecordingBanner(
                     session: recordingSession,
                     onStop: finishRecording,
-                    onCancel: recordingSession.cancelRecording,
-                    onOpenLiveNote: { showingLiveNote = true }
+                    onCancel: { cancelRecording() }
                 )
                     .padding()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -75,6 +75,13 @@ public struct ContentView: View {
             }
         }
         .animation(.default, value: recordingSession.isRecording)
+        // Keep whichever view is showing the live note (list selection on iPad/Mac, or the
+        // pushed navigationDestination on iPhone) pointed at the latest copy as it updates.
+        .onChange(of: noteStore.notes) { notes in
+            if let selectedNote, let updated = notes.first(where: { $0.id == selectedNote.id }) {
+                self.selectedNote = updated
+            }
+        }
     }
 
     private var splitView: some View {
@@ -82,7 +89,7 @@ public struct ContentView: View {
             listContent
         } detail: {
             if let selectedNote {
-                NoteDetailView(noteStore: noteStore, note: selectedNote)
+                NoteDetailView(noteStore: noteStore, note: selectedNote, liveSession: recordingSession, initialTab: selectedNote.id == recordingSession.noteID ? .transcript : .summary)
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "note.text")
@@ -198,27 +205,38 @@ public struct ContentView: View {
         } else if !apiConfig.isConfigured {
             showingNotConfiguredAlert = true
         } else {
-            recordingSession.startRecording()
+            let newNoteID = recordingSession.startRecording()
+            navigateToLiveNote(id: newNoteID)
         }
+    }
+
+    /// Jumps straight to the note just created for this recording, open on its Transcript tab —
+    /// pushed on the iPhone navigation stack, or selected directly in the split view on iPad/Mac.
+    private func navigateToLiveNote(id: UUID) {
+        guard let note = noteStore.notes.first(where: { $0.id == id }) else { return }
+        selectedNote = note
+        navigationPath.append(note)
     }
 
     private func finishRecording() {
         isProcessingNewNote = true
 
         Task {
-            if let result = await recordingSession.finishRecording() {
-                await MainActor.run {
-                    noteStore.addNote(result.note)
-                    isProcessingNewNote = false
-                    if result.transcriptionFailed {
-                        processingError = "Saved the recording's audio, but couldn't reach the transcription service, so there's no transcript or summary — check your API settings in Settings."
-                    }
-                }
-            } else {
-                await MainActor.run {
-                    isProcessingNewNote = false
+            let result = await recordingSession.finishRecording()
+            await MainActor.run {
+                isProcessingNewNote = false
+                if let result, result.transcriptionFailed {
+                    processingError = "Saved the recording's audio, but couldn't reach the transcription service, so there's no transcript or summary — check your API settings in Settings."
                 }
             }
+        }
+    }
+
+    private func cancelRecording() {
+        recordingSession.cancelRecording()
+        selectedNote = nil
+        if !navigationPath.isEmpty {
+            navigationPath.removeLast()
         }
     }
 
@@ -285,11 +303,13 @@ private struct NoteCard: View {
     }
 }
 
+/// Floats over the note list while recording. The live transcript/summary themselves are shown
+/// in the note that was already pushed on record start (see ContentView.navigateToLiveNote) —
+/// this banner just shows a short status line for when the user has navigated back to the list.
 private struct RecordingBanner: View {
     @ObservedObject var session: LiveRecordingSession
     let onStop: () -> Void
     let onCancel: () -> Void
-    let onOpenLiveNote: () -> Void
 
     /// Last few words of the live transcript, so the banner reads like a ticker rather than
     /// growing without bound.
@@ -316,20 +336,13 @@ private struct RecordingBanner: View {
             }
 
             if !transcriptTail.isEmpty {
-                Button(action: onOpenLiveNote) {
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "text.alignleft")
-                            .font(.caption)
-                        Text(transcriptTail)
-                            .font(.caption)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
+                Text(transcriptTail)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-                .animation(.default, value: transcriptTail)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .transition(.opacity)
+                    .animation(.default, value: transcriptTail)
             }
         }
         .padding()

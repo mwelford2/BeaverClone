@@ -2,18 +2,25 @@ import Foundation
 import AVFoundation
 import Combine
 
-/// Drives a recording end-to-end with live feedback: as `AudioRecorder` finishes each short
-/// segment, this transcribes it and appends to a running transcript, and periodically re-runs
-/// summarization against the transcript so far. On stop, it stitches the segment files into one
-/// final audio file so the resulting `Note` looks exactly like one recorded the old, non-live way.
+/// Drives a recording end-to-end with live feedback. A placeholder `Note` is created in the
+/// store the instant recording starts, so it appears in the list and can be navigated to
+/// immediately. As `AudioRecorder` finishes each short segment, this transcribes it, appends to
+/// a running transcript, and persists the update to that same note — so it reads as "live"
+/// whether the user is watching NoteDetailView or has navigated away. It periodically re-runs
+/// summarization against the transcript so far too. On stop, it stitches the segment files into
+/// one final audio file and does a last title/summary pass, same as a non-live recording.
 @MainActor
 public final class LiveRecordingSession: NSObject, ObservableObject {
     @Published public private(set) var liveTranscript: String = ""
     @Published public private(set) var liveSummary: String = ""
     @Published public private(set) var liveTitle: String = ""
     @Published public private(set) var isFinalizing = false
+    /// The id of the note created for the current (or just-finished) recording, so views can
+    /// tell whether a given note is the one this session is live-updating.
+    @Published public private(set) var noteID: UUID?
 
     public let recorder = AudioRecorder()
+    private let noteStore: NoteStore
 
     /// How many completed segments between live re-summarizations.
     private let summarizeEverySegments = 2
@@ -23,8 +30,10 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
     private var segmentsSinceLastSummary = 0
     private var pendingSegmentTasks: [Task<Void, Never>] = []
     private var summarizeTask: Task<Void, Never>?
+    private var recordingStartDate = Date()
 
-    public override init() {
+    public init(noteStore: NoteStore) {
+        self.noteStore = noteStore
         super.init()
         recorder.onSegmentFinished = { [weak self] segment in
             self?.handleSegmentFinished(segment)
@@ -35,7 +44,10 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
     public var elapsedTime: TimeInterval { recorder.elapsedTime }
     public var permissionDenied: Bool { recorder.permissionDenied }
 
-    public func startRecording() {
+    /// Creates the placeholder note right away and starts recording. Returns the new note's id
+    /// so the caller can navigate to it immediately.
+    @discardableResult
+    public func startRecording() -> UUID {
         liveTranscript = ""
         liveSummary = ""
         liveTitle = ""
@@ -43,7 +55,14 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         transcriptParts = []
         segmentsSinceLastSummary = 0
         pendingSegmentTasks = []
+        recordingStartDate = Date()
+
+        let placeholder = Note(title: "Recording…", date: recordingStartDate, modifiedDate: recordingStartDate)
+        noteID = placeholder.id
+        noteStore.addNote(placeholder)
+
         recorder.startRecording()
+        return placeholder.id
     }
 
     public func cancelRecording() {
@@ -51,6 +70,10 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         for task in pendingSegmentTasks { task.cancel() }
         pendingSegmentTasks = []
         recorder.cancelRecording()
+        if let noteID, let note = noteStore.notes.first(where: { $0.id == noteID }) {
+            noteStore.deleteNote(note)
+        }
+        noteID = nil
     }
 
     private func handleSegmentFinished(_ segment: RecordingSegment) {
@@ -62,6 +85,7 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
             if !text.text.isEmpty {
                 self.transcriptParts.append(text.text)
                 self.liveTranscript = self.transcriptParts.joined(separator: " ")
+                self.persistLiveState()
             }
             self.wordTimings.append(contentsOf: text.wordTimings)
 
@@ -96,18 +120,33 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
             if !result.title.isEmpty {
                 self.liveTitle = result.title
             }
+            self.persistLiveState()
         }
+    }
+
+    /// Pushes the current in-memory live transcript/summary/title into the placeholder note in
+    /// the store, so it's reflected even for observers not reading this session's own published
+    /// properties directly (e.g. the note list card, or NoteDetailView after a relaunch).
+    private func persistLiveState() {
+        guard let noteID, var note = noteStore.notes.first(where: { $0.id == noteID }) else { return }
+        note.transcript = liveTranscript
+        note.summary = liveSummary
+        if !liveTitle.isEmpty {
+            note.title = liveTitle
+        }
+        noteStore.updateNote(note)
     }
 
     /// Stops recording, waits for any in-flight segment transcriptions, stitches the segment
     /// audio into one file, and runs a final summarization pass over the complete transcript
-    /// (the live, in-progress summary may be one or two segments behind). Returns nil if there
-    /// was nothing to save. `transcriptionFailed` is true when every segment failed to
-    /// transcribe (e.g. the API is unreachable) — the note is still returned (with its audio
-    /// intact, just no transcript/summary) so the recording itself is never silently lost;
-    /// the caller can use the flag to surface an error alongside it.
+    /// (the live, in-progress summary may be one or two segments behind), then saves that as
+    /// the final state of the note created at the start of recording. Returns nil if there was
+    /// nothing to save. `transcriptionFailed` is true when every segment failed to transcribe
+    /// (e.g. the API is unreachable) — the note is still saved (with its audio intact, just no
+    /// transcript/summary) so the recording itself is never silently lost; the caller can use
+    /// the flag to surface an error alongside it.
     public func finishRecording() async -> (note: Note, transcriptionFailed: Bool)? {
-        guard let stopped = recorder.stopRecording() else { return nil }
+        guard let stopped = recorder.stopRecording(), let noteID else { return nil }
         isFinalizing = true
         defer { isFinalizing = false }
 
@@ -120,13 +159,13 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         let transcript = transcriptParts.isEmpty ? liveTranscript : transcriptParts.joined(separator: " ")
         let transcriptionFailed = transcript.isEmpty && !stopped.segments.isEmpty
 
-        var note = Note(
-            title: liveTitle.isEmpty ? "New Recording" : liveTitle,
-            transcript: transcript,
-            audioFileName: finalFileName,
-            duration: stopped.duration,
-            wordTimings: sortedTimings
-        )
+        var note = noteStore.notes.first(where: { $0.id == noteID })
+            ?? Note(id: noteID, title: "Recording…", date: recordingStartDate)
+        note.title = liveTitle.isEmpty ? "New Recording" : liveTitle
+        note.transcript = transcript
+        note.audioFileName = finalFileName
+        note.duration = stopped.duration
+        note.wordTimings = sortedTimings
 
         if !transcript.isEmpty, let summarized = try? await OpenAIService.shared.summarize(transcript: transcript) {
             note.summary = summarized.summary
@@ -137,6 +176,8 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
             note.summary = liveSummary
         }
 
+        noteStore.updateNote(note)
+        self.noteID = nil
         return (note, transcriptionFailed)
     }
 
