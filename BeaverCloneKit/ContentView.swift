@@ -8,7 +8,8 @@ public struct ContentView: View {
     @StateObject private var recordingSession: LiveRecordingSession
     @ObservedObject private var apiConfig = APIConfig.shared
     @State private var showingSettings = false
-    @State private var showingNotConfiguredAlert = false
+    @State private var transcriptionReadinessError: String?
+    @State private var isCheckingTranscription = false
     @State private var isProcessingNewNote = false
     @State private var processingError: String?
     @State private var selectedNote: Note?
@@ -54,11 +55,14 @@ public struct ContentView: View {
         }, message: {
             Text(processingError ?? "")
         })
-        .alert("Set up your API connection first", isPresented: $showingNotConfiguredAlert, actions: {
-            Button("Open Settings") { showingSettings = true }
-            Button("Cancel", role: .cancel) {}
+        .alert("Transcription isn't ready", isPresented: .constant(transcriptionReadinessError != nil), actions: {
+            Button("Open Settings") {
+                transcriptionReadinessError = nil
+                showingSettings = true
+            }
+            Button("Cancel", role: .cancel) { transcriptionReadinessError = nil }
         }, message: {
-            Text("Choose an available transcription method in Settings. Cloud transcription requires an API key and base URL.")
+            Text(transcriptionReadinessError ?? "")
         })
         .overlay(alignment: .bottom) {
             if recordingSession.isRecording {
@@ -190,23 +194,37 @@ public struct ContentView: View {
                     .fill(recordingSession.isRecording ? Color.red : BeaverTheme.accent)
                     .frame(width: 64, height: 64)
                     .shadow(color: (recordingSession.isRecording ? Color.red : BeaverTheme.accent).opacity(0.35), radius: 10, y: 4)
-                Image(systemName: recordingSession.isRecording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.white)
+                if isCheckingTranscription {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: recordingSession.isRecording ? "stop.fill" : "mic.fill")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
             }
         }
         .buttonStyle(.plain)
-        .disabled(isProcessingNewNote)
+        .disabled(isProcessingNewNote || isCheckingTranscription)
+        .accessibilityIdentifier("recordButton")
     }
 
     private func toggleRecording() {
         if recordingSession.isRecording {
             finishRecording()
-        } else if !apiConfig.canTranscribe {
-            showingNotConfiguredAlert = true
         } else {
-            let newNoteID = recordingSession.startRecording()
-            navigateToLiveNote(id: newNoteID)
+            isCheckingTranscription = true
+            Task {
+                do {
+                    try await apiConfig.prepareForTranscription()
+                    isCheckingTranscription = false
+                    let newNoteID = recordingSession.startRecording()
+                    navigateToLiveNote(id: newNoteID)
+                } catch {
+                    isCheckingTranscription = false
+                    transcriptionReadinessError = error.localizedDescription
+                }
+            }
         }
     }
 

@@ -44,13 +44,23 @@ public final class OnDeviceTranscriptionService {
 
     private init() {}
 
-    public func transcribe(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
+    /// Confirms the selected language has a local recognizer and obtains Speech permission
+    /// before the recorder starts.
+    public func prepare() async throws {
         let locale = APIConfig.shared.selectedOnDeviceLocale
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.supportsOnDeviceRecognition else {
             throw OnDeviceTranscriptionError.unavailable
         }
         guard await requestAuthorization() else {
             throw OnDeviceTranscriptionError.permissionDenied
+        }
+    }
+
+    public func transcribe(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
+        try await prepare()
+        let locale = APIConfig.shared.selectedOnDeviceLocale
+        guard let recognizer = SFSpeechRecognizer(locale: locale) else {
+            throw OnDeviceTranscriptionError.unavailable
         }
 
         let request = SFSpeechURLRecognitionRequest(url: fileURL)

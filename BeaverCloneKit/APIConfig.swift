@@ -135,6 +135,50 @@ public final class APIConfig: ObservableObject {
         (transcriptionMode == .onDevice && isOnDeviceTranscriptionAvailable) || isConfigured
     }
 
+    /// Performs the same checks that matter at recording time. This intentionally makes a
+    /// lightweight authenticated request for cloud transcription so non-empty-but-invalid
+    /// credentials cannot start a recording that has no chance of being transcribed.
+    public func prepareForTranscription() async throws {
+        switch transcriptionMode {
+        case .onDevice:
+            guard isOnDeviceTranscriptionAvailable else {
+                throw OnDeviceTranscriptionError.unavailable
+            }
+            try await OnDeviceTranscriptionService.shared.prepare()
+
+        case .cloud:
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ForceCloudTranscriptionValidationFailure") {
+                throw APIConfigError.requestFailed(status: 401, body: nil)
+            }
+            #endif
+            guard isConfigured else {
+                throw APIConfigError.notConfigured
+            }
+            guard let url = normalizedURL(path: "models"),
+                  let scheme = url.scheme?.lowercased(),
+                  ["http", "https"].contains(scheme),
+                  url.host != nil else {
+                throw APIConfigError.invalidURL
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 15
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode) else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                throw APIConfigError.requestFailed(
+                    status: status,
+                    body: String(data: data, encoding: .utf8)
+                )
+            }
+        }
+    }
+
     public var isConfigured: Bool {
         !apiKey.isEmpty && !baseURL.isEmpty
     }

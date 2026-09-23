@@ -40,4 +40,16 @@ final class TranscriptionSettingsUITests: XCTestCase {
         app.buttons["hideOnDeviceUnavailableNote"].tap()
         XCTAssertFalse(note.exists)
     }
+
+    func testRecordingDoesNotStartWhenCloudValidationFails() {
+        let app = XCUIApplication()
+        app.launchArguments += ["-ForceCloudTranscriptionValidationFailure", "-transcriptionMode", "cloud"]
+        app.launch()
+
+        app.buttons["recordButton"].tap()
+
+        XCTAssertTrue(app.alerts["Transcription isn't ready"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts["Transcription isn't ready"].buttons["Open Settings"].exists)
+        XCTAssertFalse(app.staticTexts["Recording"].exists)
+    }
 }
