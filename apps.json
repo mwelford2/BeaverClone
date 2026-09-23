@@ -14,6 +14,14 @@
       "category": "productivity",
       "versions": [
         {
+          "version": "1.2.1",
+          "date": "2026-09-23",
+          "localizedDescription": "- Recording now starts only after the selected transcription method passes a readiness check\n- Cloud mode validates the configured API key and base URL before opening the microphone\n- On-device mode validates local language support and Speech permission before recording\n- Failed checks keep recording stopped and provide a direct shortcut to Settings",
+          "downloadURL": "https://github.com/mwelford2/BeaverClone/releases/download/v1.2.1/Beaver.ipa",
+          "size": 2032503,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.2.0",
           "date": "2026-09-23",
           "localizedDescription": "- Added optional private, offline on-device transcription on supported iPhones, iPads, and Macs\n- Added an on-device language selector and capability-aware Settings interface\n- Live transcription now uploads compact 6-second audio segments with retries and ordered results\n- Cloud connection settings are hidden while on-device transcription is selected\n- Added a dismissible notice when on-device transcription is unavailable",

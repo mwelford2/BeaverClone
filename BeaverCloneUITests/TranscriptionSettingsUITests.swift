@@ -51,5 +51,10 @@ final class TranscriptionSettingsUITests: XCTestCase {
         XCTAssertTrue(app.alerts["Transcription isn't ready"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts["Transcription isn't ready"].buttons["Open Settings"].exists)
         XCTAssertFalse(app.staticTexts["Recording"].exists)
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Transcription readiness failure"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }
