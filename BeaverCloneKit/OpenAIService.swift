@@ -1,4 +1,5 @@
 import Foundation
+import Speech
 
 public enum OpenAIServiceError: LocalizedError {
     case notConfigured
@@ -19,6 +20,75 @@ public enum OpenAIServiceError: LocalizedError {
             return "Request failed with status \(status)."
         case .invalidData:
             return "The server response wasn't in the expected format."
+        }
+    }
+}
+
+public enum OnDeviceTranscriptionError: LocalizedError {
+    case unavailable
+    case permissionDenied
+
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable: return "On-device transcription isn't available for this device or language."
+        case .permissionDenied: return "Speech recognition permission was not granted."
+        }
+    }
+}
+
+/// Uses Apple's speech model and never sends audio off the device. Each invocation receives one
+/// short recording segment, matching the same interface used by the cloud transcription service.
+@MainActor
+public final class OnDeviceTranscriptionService {
+    public static let shared = OnDeviceTranscriptionService()
+
+    private init() {}
+
+    public func transcribe(fileURL: URL) async throws -> (text: String, wordTimings: [WordTiming]) {
+        let locale = APIConfig.shared.selectedOnDeviceLocale
+        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.supportsOnDeviceRecognition else {
+            throw OnDeviceTranscriptionError.unavailable
+        }
+        guard await requestAuthorization() else {
+            throw OnDeviceTranscriptionError.permissionDenied
+        }
+
+        let request = SFSpeechURLRecognitionRequest(url: fileURL)
+        request.requiresOnDeviceRecognition = true
+        request.shouldReportPartialResults = false
+
+        return try await withCheckedThrowingContinuation { continuation in
+            var completed = false
+            recognizer.recognitionTask(with: request) { result, error in
+                guard !completed else { return }
+                if let result, result.isFinal {
+                    completed = true
+                    let timings = result.bestTranscription.segments.map {
+                        WordTiming(word: $0.substring, start: $0.timestamp, end: $0.timestamp + $0.duration)
+                    }
+                    continuation.resume(returning: (result.bestTranscription.formattedString, timings))
+                } else if let error {
+                    completed = true
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func requestAuthorization() async -> Bool {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            return true
+        case .denied, .restricted:
+            return false
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { status in
+                    continuation.resume(returning: status == .authorized)
+                }
+            }
+        @unknown default:
+            return false
         }
     }
 }
@@ -50,6 +120,9 @@ public final class OpenAIService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // A segment is at most ten seconds long. Do not let one unhealthy request hold finalization
+        // open indefinitely; LiveRecordingSession retries transient failures independently.
+        request.timeoutInterval = 30
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         let audioData = try Data(contentsOf: fileURL)

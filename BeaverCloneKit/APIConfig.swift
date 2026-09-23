@@ -1,11 +1,20 @@
 import Foundation
 import Combine
+import Speech
 #if os(iOS)
 import UIKit
 #endif
 
 @MainActor
 public final class APIConfig: ObservableObject {
+    public enum TranscriptionMode: String, CaseIterable, Identifiable {
+        case cloud
+        case onDevice
+
+        public var id: String { rawValue }
+        public var title: String { self == .cloud ? "Cloud" : "On Device" }
+    }
+
     public static let shared = APIConfig()
 
     private init() {
@@ -14,6 +23,10 @@ public final class APIConfig: ObservableObject {
         transcriptionModel = UserDefaults.standard.string(forKey: Keys.transcriptionModel)
         chatModel = UserDefaults.standard.string(forKey: Keys.chatModel)
         keepScreenAwake = UserDefaults.standard.bool(forKey: Keys.keepScreenAwake)
+        transcriptionMode = TranscriptionMode(rawValue: UserDefaults.standard.string(forKey: Keys.transcriptionMode) ?? "") ?? .cloud
+        onDeviceLocaleIdentifier = UserDefaults.standard.string(forKey: Keys.onDeviceLocaleIdentifier) ?? Locale.current.identifier
+        hideOnDeviceUnavailableNotice = UserDefaults.standard.bool(forKey: Keys.hideOnDeviceUnavailableNotice)
+        availableOnDeviceLocales = Self.detectAvailableOnDeviceLocales()
         #if os(iOS)
         UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
         #endif
@@ -25,6 +38,9 @@ public final class APIConfig: ObservableObject {
         static let transcriptionModel = "transcriptionModel"
         static let chatModel = "chatModel"
         static let keepScreenAwake = "keepScreenAwake"
+        static let transcriptionMode = "transcriptionMode"
+        static let onDeviceLocaleIdentifier = "onDeviceLocaleIdentifier"
+        static let hideOnDeviceUnavailableNotice = "hideOnDeviceUnavailableNotice"
     }
 
     /// Set by the apiKey didSet whenever a write to the Keychain is attempted, so callers
@@ -69,6 +85,54 @@ public final class APIConfig: ObservableObject {
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
             #endif
         }
+    }
+
+    @Published public var transcriptionMode: TranscriptionMode {
+        didSet { UserDefaults.standard.set(transcriptionMode.rawValue, forKey: Keys.transcriptionMode) }
+    }
+
+    @Published public var onDeviceLocaleIdentifier: String {
+        didSet { UserDefaults.standard.set(onDeviceLocaleIdentifier, forKey: Keys.onDeviceLocaleIdentifier) }
+    }
+
+    @Published public var hideOnDeviceUnavailableNotice: Bool {
+        didSet { UserDefaults.standard.set(hideOnDeviceUnavailableNotice, forKey: Keys.hideOnDeviceUnavailableNotice) }
+    }
+
+    public let availableOnDeviceLocales: [Locale]
+
+    public var isOnDeviceTranscriptionAvailable: Bool {
+        #if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("-ForceOnDeviceTranscriptionAvailable") { return true }
+        if ProcessInfo.processInfo.arguments.contains("-ForceOnDeviceTranscriptionUnavailable") { return false }
+        #endif
+        return !availableOnDeviceLocales.isEmpty
+    }
+
+    private static func detectAvailableOnDeviceLocales() -> [Locale] {
+        let locales = SFSpeechRecognizer.supportedLocales()
+            .filter { SFSpeechRecognizer(locale: $0)?.supportsOnDeviceRecognition == true }
+            .sorted {
+                let first = Locale.current.localizedString(forIdentifier: $0.identifier) ?? $0.identifier
+                let second = Locale.current.localizedString(forIdentifier: $1.identifier) ?? $1.identifier
+                return first.localizedCaseInsensitiveCompare(second) == .orderedAscending
+            }
+        #if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("-ForceOnDeviceTranscriptionAvailable"), locales.isEmpty {
+            return [.current]
+        }
+        #endif
+        return locales
+    }
+
+    public var selectedOnDeviceLocale: Locale {
+        let selected = availableOnDeviceLocales.first { $0.identifier == onDeviceLocaleIdentifier }
+        let current = availableOnDeviceLocales.first { $0.identifier == Locale.current.identifier }
+        return selected ?? current ?? availableOnDeviceLocales.first ?? .current
+    }
+
+    public var canTranscribe: Bool {
+        (transcriptionMode == .onDevice && isOnDeviceTranscriptionAvailable) || isConfigured
     }
 
     public var isConfigured: Bool {

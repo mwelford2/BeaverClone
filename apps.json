@@ -14,6 +14,14 @@
       "category": "productivity",
       "versions": [
         {
+          "version": "1.2.0",
+          "date": "2026-09-23",
+          "localizedDescription": "- Added optional private, offline on-device transcription on supported iPhones, iPads, and Macs\n- Added an on-device language selector and capability-aware Settings interface\n- Live transcription now uploads compact 6-second audio segments with retries and ordered results\n- Cloud connection settings are hidden while on-device transcription is selected\n- Added a dismissible notice when on-device transcription is unavailable",
+          "downloadURL": "https://github.com/mwelford2/BeaverClone/releases/download/v1.2.0/Beaver.ipa",
+          "size": 2036866,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.1.0",
           "date": "2026-09-02",
           "localizedDescription": "- Recording now opens the note immediately, live on the Transcript tab, instead of a separate live view\n- Live transcription in short segments cut at pauses in speech, not mid-word\n- Live summary updates roughly every 30s during recording; note auto-renames when you stop\n- Recording is now blocked with a prompt to Settings if no API key is configured\n- If transcription fails mid-recording, audio is still saved instead of lost",

@@ -28,9 +28,9 @@ public final class AudioRecorder: NSObject, ObservableObject {
     public var onSegmentFinished: ((RecordingSegment) -> Void)?
 
     /// Target segment length before we start listening for a quiet moment to cut on.
-    private let targetSegmentDuration: TimeInterval = 12
+    private let targetSegmentDuration: TimeInterval = 6
     /// Hard cap so a continuously-loud recording still gets chunked.
-    private let maxSegmentDuration: TimeInterval = 18
+    private let maxSegmentDuration: TimeInterval = 10
     /// How long input level must stay below the silence threshold before we treat it as a pause.
     private let silenceHoldDuration: TimeInterval = 0.3
     /// Average-power threshold (dBFS) below which we consider the input "quiet."
@@ -112,9 +112,12 @@ public final class AudioRecorder: NSObject, ObservableObject {
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44100,
+            // Speech does not benefit from music-quality audio. Keeping each upload small makes
+            // live transcription much less susceptible to slow connections and request timeouts.
+            AVSampleRateKey: 16000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            AVEncoderBitRateKey: 64000,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
         ]
 
         do {

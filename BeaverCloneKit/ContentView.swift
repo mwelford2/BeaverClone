@@ -58,7 +58,7 @@ public struct ContentView: View {
             Button("Open Settings") { showingSettings = true }
             Button("Cancel", role: .cancel) {}
         }, message: {
-            Text("Beaver needs an API key and base URL to transcribe recordings. Add them in Settings before recording.")
+            Text("Choose an available transcription method in Settings. Cloud transcription requires an API key and base URL.")
         })
         .overlay(alignment: .bottom) {
             if recordingSession.isRecording {
@@ -202,7 +202,7 @@ public struct ContentView: View {
     private func toggleRecording() {
         if recordingSession.isRecording {
             finishRecording()
-        } else if !apiConfig.isConfigured {
+        } else if !apiConfig.canTranscribe {
             showingNotConfiguredAlert = true
         } else {
             let newNoteID = recordingSession.startRecording()

@@ -16,62 +16,100 @@ public struct SettingsView: View {
     public var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    TextField("Base URL", text: $baseURL)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        #endif
-                        .autocorrectionDisabled()
-                        .disabled(!isEditingConnection)
-                        .foregroundStyle(isEditingConnection ? .primary : .secondary)
-                    SecureField("API Key", text: $apiKey)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                        .autocorrectionDisabled()
-                        .disabled(!isEditingConnection)
-                        .foregroundStyle(isEditingConnection ? .primary : .secondary)
-                } header: {
-                    Text("API Connection")
-                } footer: {
-                    if isEditingConnection {
-                        Text("Works with any OpenAI-compatible endpoint (OpenAI, Azure OpenAI, local servers, etc.).")
-                    } else if config.apiKeySaveFailed {
-                        Label("Couldn't save the API key to Keychain — try again", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                    } else {
-                        Label("Saved to Keychain — persists across restarts", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
+                if config.isOnDeviceTranscriptionAvailable {
+                    Section {
+                        Picker("Method", selection: $config.transcriptionMode) {
+                            ForEach(APIConfig.TranscriptionMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("transcriptionMethodPicker")
+                    } header: {
+                        Text("Transcription")
+                    } footer: {
+                        if config.transcriptionMode == .onDevice {
+                            Text("Uses Apple's built-in speech recognition. Recorded audio stays on this device and transcription works without an internet connection.")
+                                .accessibilityIdentifier("onDeviceDescription")
+                        } else {
+                            Text("Short audio segments are sent to your configured transcription service.")
+                        }
                     }
                 }
 
-                if isEditingConnection {
+                if config.transcriptionMode == .onDevice {
                     Section {
-                        Button(action: fetchModels) {
-                            HStack {
-                                Text("Fetch Available Models")
-                                Spacer()
-                                if isFetchingModels {
-                                    ProgressView()
-                                }
+                        Picker("Language", selection: $config.onDeviceLocaleIdentifier) {
+                            ForEach(config.availableOnDeviceLocales, id: \.identifier) { locale in
+                                Text(localeDisplayName(locale)).tag(locale.identifier)
                             }
                         }
-                        .disabled(apiKey.isEmpty || baseURL.isEmpty || isFetchingModels)
+                        .accessibilityIdentifier("onDeviceLanguagePicker")
+                    } header: {
+                        Text("On-Device Settings")
+                    } footer: {
+                        Text("Choose the language spoken in recordings. Availability is determined by the speech models installed by the system.")
+                    }
+                }
 
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .font(.caption)
+                if config.transcriptionMode == .cloud {
+                    Section {
+                        TextField("Base URL", text: $baseURL)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
+                            #endif
+                            .autocorrectionDisabled()
+                            .disabled(!isEditingConnection)
+                            .foregroundStyle(isEditingConnection ? .primary : .secondary)
+                        SecureField("API Key", text: $apiKey)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                            .autocorrectionDisabled()
+                            .disabled(!isEditingConnection)
+                            .foregroundStyle(isEditingConnection ? .primary : .secondary)
+                    } header: {
+                        Text("API Connection")
+                    } footer: {
+                        if isEditingConnection {
+                            Text("Works with any OpenAI-compatible endpoint (OpenAI, Azure OpenAI, local servers, etc.).")
+                        } else if config.apiKeySaveFailed {
+                            Label("Couldn't save the API key to Keychain — try again", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.red)
-                        } else if fetchSucceeded {
-                            Label("Connected — \(config.models.count) models found", systemImage: "checkmark.circle.fill")
-                                .font(.caption)
+                        } else if config.isConfigured {
+                            Label("Saved to Keychain — persists across restarts", systemImage: "checkmark.seal.fill")
                                 .foregroundStyle(.green)
                         }
                     }
-                } else {
-                    Section {
-                        Button("Edit Connection") { isEditingConnection = true }
+
+                    if isEditingConnection {
+                        Section {
+                            Button(action: fetchModels) {
+                                HStack {
+                                    Text("Fetch Available Models")
+                                    Spacer()
+                                    if isFetchingModels {
+                                        ProgressView()
+                                    }
+                                }
+                            }
+                            .disabled(apiKey.isEmpty || baseURL.isEmpty || isFetchingModels)
+
+                            if let errorMessage {
+                                Text(errorMessage)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            } else if fetchSucceeded {
+                                Label("Connected — \(config.models.count) models found", systemImage: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                            }
+                        }
+                    } else {
+                        Section {
+                            Button("Edit Connection") { isEditingConnection = true }
+                        }
                     }
                 }
 
@@ -83,7 +121,7 @@ public struct SettingsView: View {
                 }
                 #endif
 
-                if !config.models.isEmpty {
+                if config.transcriptionMode == .cloud && !config.models.isEmpty {
                     Section {
                         Picker("Transcription Model", selection: $config.transcriptionModel) {
                             Text("None").tag(String?.none)
@@ -112,6 +150,20 @@ public struct SettingsView: View {
                         savedFooter
                     }
                 }
+
+                if !config.isOnDeviceTranscriptionAvailable && !config.hideOnDeviceUnavailableNotice {
+                    Section {
+                        Text("On-device transcription isn't available for this device or language. Cloud transcription will continue to work normally.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("onDeviceUnavailableNote")
+                        Button("Hide This Note") {
+                            config.hideOnDeviceUnavailableNotice = true
+                        }
+                        .font(.caption)
+                        .accessibilityIdentifier("hideOnDeviceUnavailableNote")
+                    }
+                }
             }
             .formStyle(.grouped)
             .tint(BeaverTheme.accent)
@@ -124,7 +176,7 @@ public struct SettingsView: View {
                         }
                         dismiss()
                     }
-                    .disabled(isEditingConnection && (apiKey.isEmpty || baseURL.isEmpty))
+                    .disabled(isEditingConnection && config.transcriptionMode == .cloud && (apiKey.isEmpty || baseURL.isEmpty))
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -144,8 +196,19 @@ public struct SettingsView: View {
     private func load() {
         apiKey = config.apiKey
         baseURL = config.baseURL
+        if !config.isOnDeviceTranscriptionAvailable && config.transcriptionMode == .onDevice {
+            config.transcriptionMode = .cloud
+        }
+        if config.isOnDeviceTranscriptionAvailable,
+           !config.availableOnDeviceLocales.contains(where: { $0.identifier == config.onDeviceLocaleIdentifier }) {
+            config.onDeviceLocaleIdentifier = config.selectedOnDeviceLocale.identifier
+        }
         // Only drop into edit mode if there's nothing saved yet.
-        isEditingConnection = !config.isConfigured
+        isEditingConnection = !config.isConfigured && config.transcriptionMode == .cloud
+    }
+
+    private func localeDisplayName(_ locale: Locale) -> String {
+        Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier
     }
 
     private func save() {

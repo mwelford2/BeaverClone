@@ -25,10 +25,13 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
     /// How many completed segments between live re-summarizations.
     private let summarizeEverySegments = 2
 
-    private var wordTimings: [WordTiming] = []
-    private var transcriptParts: [String] = []
+    // Requests can finish in a different order from the audio. Key results by their timeline
+    // offset and rebuild the published state in recording order after every response.
+    private var wordTimingsByOffset: [TimeInterval: [WordTiming]] = [:]
+    private var transcriptPartsByOffset: [TimeInterval: String] = [:]
     private var segmentsSinceLastSummary = 0
     private var pendingSegmentTasks: [Task<Void, Never>] = []
+    private var lastSegmentTask: Task<Void, Never>?
     private var summarizeTask: Task<Void, Never>?
     private var recordingStartDate = Date()
 
@@ -51,10 +54,11 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         liveTranscript = ""
         liveSummary = ""
         liveTitle = ""
-        wordTimings = []
-        transcriptParts = []
+        wordTimingsByOffset = [:]
+        transcriptPartsByOffset = [:]
         segmentsSinceLastSummary = 0
         pendingSegmentTasks = []
+        lastSegmentTask = nil
         recordingStartDate = Date()
 
         let placeholder = Note(title: "Recording…", date: recordingStartDate, modifiedDate: recordingStartDate)
@@ -69,6 +73,7 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         summarizeTask?.cancel()
         for task in pendingSegmentTasks { task.cancel() }
         pendingSegmentTasks = []
+        lastSegmentTask = nil
         recorder.cancelRecording()
         if let noteID, let note = noteStore.notes.first(where: { $0.id == noteID }) {
             noteStore.deleteNote(note)
@@ -77,17 +82,23 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
     }
 
     private func handleSegmentFinished(_ segment: RecordingSegment) {
+        let previousTask = lastSegmentTask
         let task = Task { [weak self] in
+            await previousTask?.value
+            guard !Task.isCancelled else { return }
             guard let self else { return }
             guard let text = await self.transcribeSegment(segment) else { return }
             guard !Task.isCancelled else { return }
 
             if !text.text.isEmpty {
-                self.transcriptParts.append(text.text)
-                self.liveTranscript = self.transcriptParts.joined(separator: " ")
+                self.transcriptPartsByOffset[segment.startOffset] = text.text
+                self.liveTranscript = self.transcriptPartsByOffset
+                    .sorted { $0.key < $1.key }
+                    .map(\.value)
+                    .joined(separator: " ")
                 self.persistLiveState()
             }
-            self.wordTimings.append(contentsOf: text.wordTimings)
+            self.wordTimingsByOffset[segment.startOffset] = text.wordTimings
 
             self.segmentsSinceLastSummary += 1
             if self.segmentsSinceLastSummary >= self.summarizeEverySegments {
@@ -96,15 +107,40 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
             }
         }
         pendingSegmentTasks.append(task)
+        lastSegmentTask = task
     }
 
     private func transcribeSegment(_ segment: RecordingSegment) async -> (text: String, wordTimings: [WordTiming])? {
         let url = AudioFileStore.shared.url(for: segment.fileName)
-        guard let result = try? await OpenAIService.shared.transcribe(fileURL: url) else { return nil }
+        var result: (text: String, wordTimings: [WordTiming])?
+        for attempt in 0..<3 {
+            do {
+                if APIConfig.shared.transcriptionMode == .onDevice {
+                    result = try await OnDeviceTranscriptionService.shared.transcribe(fileURL: url)
+                } else {
+                    result = try await OpenAIService.shared.transcribe(fileURL: url)
+                }
+                break
+            } catch {
+                guard Self.isTransient(error), attempt < 2, !Task.isCancelled else { return nil }
+                try? await Task.sleep(nanoseconds: UInt64(attempt + 1) * 1_000_000_000)
+            }
+        }
+        guard let result else { return nil }
         let offsetTimings = result.wordTimings.map {
             WordTiming(word: $0.word, start: $0.start + segment.startOffset, end: $0.end + segment.startOffset)
         }
         return (result.text, offsetTimings)
+    }
+
+    private static func isTransient(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return urlError.code != .cancelled
+        }
+        if case OpenAIServiceError.requestFailed(let status, _) = error {
+            return status == 408 || status == 429 || (500...599).contains(status)
+        }
+        return false
     }
 
     private func refreshLiveSummary() {
@@ -152,11 +188,18 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
 
         for task in pendingSegmentTasks { await task.value }
         pendingSegmentTasks = []
+        lastSegmentTask = nil
         summarizeTask?.cancel()
 
         let finalFileName = await Self.concatenate(segments: stopped.segments)
-        let sortedTimings = wordTimings.sorted { $0.start < $1.start }
-        let transcript = transcriptParts.isEmpty ? liveTranscript : transcriptParts.joined(separator: " ")
+        let sortedTimings = wordTimingsByOffset
+            .sorted { $0.key < $1.key }
+            .flatMap(\.value)
+            .sorted { $0.start < $1.start }
+        let orderedParts = transcriptPartsByOffset
+            .sorted { $0.key < $1.key }
+            .map(\.value)
+        let transcript = orderedParts.isEmpty ? liveTranscript : orderedParts.joined(separator: " ")
         let transcriptionFailed = transcript.isEmpty && !stopped.segments.isEmpty
 
         var note = noteStore.notes.first(where: { $0.id == noteID })
@@ -167,7 +210,8 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         note.duration = stopped.duration
         note.wordTimings = sortedTimings
 
-        if !transcript.isEmpty, let summarized = try? await OpenAIService.shared.summarize(transcript: transcript) {
+        if APIConfig.shared.isConfigured, !transcript.isEmpty,
+           let summarized = try? await OpenAIService.shared.summarize(transcript: transcript) {
             note.summary = summarized.summary
             if !summarized.title.isEmpty {
                 note.title = summarized.title
