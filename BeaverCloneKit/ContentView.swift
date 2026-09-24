@@ -68,6 +68,7 @@ public struct ContentView: View {
             if recordingSession.isRecording {
                 RecordingBanner(
                     session: recordingSession,
+                    showsOnDeviceTranscript: recordingSession.isOnDeviceRecording,
                     onStop: finishRecording,
                     onCancel: { cancelRecording() }
                 )
@@ -217,6 +218,9 @@ public struct ContentView: View {
             Task {
                 do {
                     try await apiConfig.prepareForTranscription()
+                    guard await recordingSession.requestMicrophonePermission() else {
+                        throw RecordingPermissionError.microphonePermissionDenied
+                    }
                     isCheckingTranscription = false
                     let newNoteID = recordingSession.startRecording()
                     navigateToLiveNote(id: newNoteID)
@@ -244,7 +248,11 @@ public struct ContentView: View {
             await MainActor.run {
                 isProcessingNewNote = false
                 if let result, result.transcriptionFailed {
-                    processingError = "Saved the recording's audio, but couldn't reach the transcription service, so there's no transcript or summary — check your API settings in Settings."
+                    if apiConfig.transcriptionMode == .onDevice {
+                        processingError = "Saved the recording's audio, but on-device speech recognition couldn't transcribe it. Check that Speech Recognition is allowed for Beaver in system settings."
+                    } else {
+                        processingError = "Saved the recording's audio, but couldn't reach the transcription service, so there's no transcript or summary — check your API settings in Settings."
+                    }
                 }
             }
         }
@@ -277,6 +285,17 @@ public struct ContentView: View {
         return fileName
     }
     #endif
+}
+
+private enum RecordingPermissionError: LocalizedError {
+    case microphonePermissionDenied
+
+    var errorDescription: String? {
+        switch self {
+        case .microphonePermissionDenied:
+            return "Microphone access is required to start a recording. Allow Beaver to use the microphone in system settings and try again."
+        }
+    }
 }
 
 private struct NoteCard: View {
@@ -326,6 +345,7 @@ private struct NoteCard: View {
 /// this banner just shows a short status line for when the user has navigated back to the list.
 private struct RecordingBanner: View {
     @ObservedObject var session: LiveRecordingSession
+    let showsOnDeviceTranscript: Bool
     let onStop: () -> Void
     let onCancel: () -> Void
 
@@ -346,6 +366,7 @@ private struct RecordingBanner: View {
                 Text(formattedTime(session.elapsedTime))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(BeaverTheme.navy)
+                    .accessibilityIdentifier("recordingElapsedTime")
                 Spacer()
                 Button("Cancel", role: .destructive, action: onCancel)
                 Button("Done", action: onStop)
@@ -353,7 +374,26 @@ private struct RecordingBanner: View {
                     .tint(BeaverTheme.accent)
             }
 
-            if !transcriptTail.isEmpty {
+            if showsOnDeviceTranscript {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                        Text("Live transcription")
+                            .accessibilityIdentifier("onDeviceLiveTranscript")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(BeaverTheme.navy)
+                    Text(transcriptTail.isEmpty ? "Listening…" : transcriptTail)
+                        .font(.caption)
+                        .foregroundStyle(transcriptTail.isEmpty ? .secondary : .primary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(BeaverTheme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
+                .transition(.opacity)
+            } else if !transcriptTail.isEmpty {
                 Text(transcriptTail)
                     .font(.caption)
                     .foregroundStyle(.secondary)

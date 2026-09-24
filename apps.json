@@ -14,6 +14,14 @@
       "category": "productivity",
       "versions": [
         {
+          "version": "1.2.2",
+          "date": "2026-09-24",
+          "localizedDescription": "- Fixed on-device recording so it no longer requires a remote API endpoint\n- Fixed the recording timer updating during live recording\n- Added an on-device live transcription panel above the recording controls\n- Settings now check Speech Recognition support and permission immediately when On Device is selected\n- Recording now checks microphone access before creating a note",
+          "downloadURL": "https://github.com/mwelford2/BeaverClone/releases/download/v1.2.2/Beaver.ipa",
+          "size": 2041949,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.2.1",
           "date": "2026-09-23",
           "localizedDescription": "- Recording now starts only after the selected transcription method passes a readiness check\n- Cloud mode validates the configured API key and base URL before opening the microphone\n- On-device mode validates local language support and Speech permission before recording\n- Failed checks keep recording stopped and provide a direct shortcut to Settings",

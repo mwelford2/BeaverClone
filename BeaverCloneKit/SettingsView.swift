@@ -10,6 +10,8 @@ public struct SettingsView: View {
     @State private var errorMessage: String?
     @State private var fetchSucceeded = false
     @State private var isEditingConnection = false
+    @State private var isCheckingOnDeviceReadiness = false
+    @State private var onDeviceReadinessError: String?
 
     public init() {}
 
@@ -18,7 +20,7 @@ public struct SettingsView: View {
             Form {
                 if config.isOnDeviceTranscriptionAvailable {
                     Section {
-                        Picker("Method", selection: $config.transcriptionMode) {
+                        Picker("Method", selection: transcriptionModeBinding) {
                             ForEach(APIConfig.TranscriptionMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
                             }
@@ -31,6 +33,17 @@ public struct SettingsView: View {
                         if config.transcriptionMode == .onDevice {
                             Text("Uses Apple's built-in speech recognition. Recorded audio stays on this device and transcription works without an internet connection.")
                                 .accessibilityIdentifier("onDeviceDescription")
+                            if isCheckingOnDeviceReadiness {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                    Text("Checking Speech Recognition…")
+                                }
+                            } else if let onDeviceReadinessError {
+                                Text(onDeviceReadinessError)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .accessibilityIdentifier("onDeviceReadinessError")
+                            }
                         } else {
                             Text("Short audio segments are sent to your configured transcription service.")
                         }
@@ -193,6 +206,21 @@ public struct SettingsView: View {
             .foregroundStyle(.green)
     }
 
+    private var transcriptionModeBinding: Binding<APIConfig.TranscriptionMode> {
+        Binding(
+            get: { config.transcriptionMode },
+            set: { mode in
+                config.transcriptionMode = mode
+                guard mode == .onDevice else {
+                    isCheckingOnDeviceReadiness = false
+                    onDeviceReadinessError = nil
+                    return
+                }
+                validateOnDeviceReadiness()
+            }
+        )
+    }
+
     private func load() {
         apiKey = config.apiKey
         baseURL = config.baseURL
@@ -235,6 +263,24 @@ public struct SettingsView: View {
             } catch {
                 isFetchingModels = false
                 errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// On-device speech requires a system language model and the user's Speech Recognition
+    /// permission. Check at selection time so a missing capability is explained in Settings,
+    /// rather than only when the user tries to record.
+    private func validateOnDeviceReadiness() {
+        isCheckingOnDeviceReadiness = true
+        onDeviceReadinessError = nil
+
+        Task {
+            do {
+                try await OnDeviceTranscriptionService.shared.prepare()
+                isCheckingOnDeviceReadiness = false
+            } catch {
+                isCheckingOnDeviceReadiness = false
+                onDeviceReadinessError = error.localizedDescription
             }
         }
     }

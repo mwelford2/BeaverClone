@@ -47,6 +47,19 @@ public final class OnDeviceTranscriptionService {
     /// Confirms the selected language has a local recognizer and obtains Speech permission
     /// before the recorder starts.
     public func prepare() async throws {
+        #if targetEnvironment(simulator)
+        // The Simulator has no downloadable on-device speech model. This opt-in test seam lets
+        // the UI test exercise the local-recording path after microphone permission is granted;
+        // it is unavailable on real devices and in release builds.
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ForceOnDeviceTranscriptionPermissionDenied") {
+            throw OnDeviceTranscriptionError.permissionDenied
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ForceOnDeviceTranscriptionReady") {
+            return
+        }
+        #endif
+        #endif
         let locale = APIConfig.shared.selectedOnDeviceLocale
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.supportsOnDeviceRecognition else {
             throw OnDeviceTranscriptionError.unavailable

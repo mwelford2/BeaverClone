@@ -57,4 +57,58 @@ final class TranscriptionSettingsUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+
+    func testOnDeviceRecordingShowsLiveTimerWithoutCloudConfiguration() {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ForceOnDeviceTranscriptionAvailable",
+            "-ForceOnDeviceTranscriptionReady",
+            "-transcriptionMode", "onDevice"
+        ]
+        app.launch()
+
+        addUIInterruptionMonitor(withDescription: "Microphone permission") { alert in
+            let allow = alert.buttons["Allow"]
+            guard allow.exists else { return false }
+            allow.tap()
+            return true
+        }
+
+        app.buttons["recordButton"].tap()
+        // Trigger delivery of the permission interruption monitor if this is the first launch.
+        app.tap()
+
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
+        let elapsedTime = app.staticTexts["recordingElapsedTime"]
+        XCTAssertTrue(elapsedTime.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["onDeviceLiveTranscript"].exists)
+        let timeAdvanced = NSPredicate(format: "label != %@", "00:00")
+        expectation(for: timeAdvanced, evaluatedWith: elapsedTime)
+        waitForExpectations(timeout: 5)
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "On-device recording live timer"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["Cancel"].tap()
+    }
+
+    func testOnDeviceSelectionExplainsMissingSpeechPermissionImmediately() {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-ForceOnDeviceTranscriptionAvailable",
+            "-ForceOnDeviceTranscriptionPermissionDenied",
+            "-transcriptionMode", "cloud"
+        ]
+        app.launch()
+
+        app.buttons["Settings"].tap()
+        let picker = app.segmentedControls["transcriptionMethodPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.buttons["On Device"].tap()
+
+        XCTAssertTrue(app.staticTexts["onDeviceReadinessError"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["Base URL"].exists)
+    }
 }

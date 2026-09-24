@@ -75,6 +75,16 @@ public final class AudioRecorder: NSObject, ObservableObject {
         #endif
     }
 
+    /// Async form used by the recording preflight, so the UI never creates a recording that
+    /// cannot actually start because microphone access is unavailable.
+    public func requestPermission() async -> Bool {
+        await withCheckedContinuation { continuation in
+            requestPermission { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+
     public func startRecording() {
         requestPermission { [weak self] granted in
             guard let self else { return }

@@ -34,10 +34,21 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
     private var lastSegmentTask: Task<Void, Never>?
     private var summarizeTask: Task<Void, Never>?
     private var recordingStartDate = Date()
+    /// Freeze the method selected when recording begins. This makes the recording path immune
+    /// to a later Settings update (and, importantly, ensures an on-device recording can never
+    /// fall through to the cloud client).
+    private var activeTranscriptionMode: APIConfig.TranscriptionMode?
+    private var recorderChangeCancellable: AnyCancellable?
 
     public init(noteStore: NoteStore) {
         self.noteStore = noteStore
         super.init()
+        // `isRecording` and `elapsedTime` are computed from the recorder. Forward its
+        // publishing so views observing this session redraw as soon as recording starts and
+        // on every timer tick.
+        recorderChangeCancellable = recorder.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         recorder.onSegmentFinished = { [weak self] segment in
             self?.handleSegmentFinished(segment)
         }
@@ -46,6 +57,11 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
     public var isRecording: Bool { recorder.isRecording }
     public var elapsedTime: TimeInterval { recorder.elapsedTime }
     public var permissionDenied: Bool { recorder.permissionDenied }
+    public var isOnDeviceRecording: Bool { activeTranscriptionMode == .onDevice }
+
+    public func requestMicrophonePermission() async -> Bool {
+        await recorder.requestPermission()
+    }
 
     /// Creates the placeholder note right away and starts recording. Returns the new note's id
     /// so the caller can navigate to it immediately.
@@ -60,6 +76,7 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         pendingSegmentTasks = []
         lastSegmentTask = nil
         recordingStartDate = Date()
+        activeTranscriptionMode = APIConfig.shared.transcriptionMode
 
         let placeholder = Note(title: "Recording…", date: recordingStartDate, modifiedDate: recordingStartDate)
         noteID = placeholder.id
@@ -79,6 +96,7 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
             noteStore.deleteNote(note)
         }
         noteID = nil
+        activeTranscriptionMode = nil
     }
 
     private func handleSegmentFinished(_ segment: RecordingSegment) {
@@ -115,7 +133,7 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         var result: (text: String, wordTimings: [WordTiming])?
         for attempt in 0..<3 {
             do {
-                if APIConfig.shared.transcriptionMode == .onDevice {
+                if activeTranscriptionMode == .onDevice {
                     result = try await OnDeviceTranscriptionService.shared.transcribe(fileURL: url)
                 } else {
                     result = try await OpenAIService.shared.transcribe(fileURL: url)
@@ -210,7 +228,7 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
         note.duration = stopped.duration
         note.wordTimings = sortedTimings
 
-        if APIConfig.shared.isConfigured, !transcript.isEmpty,
+        if activeTranscriptionMode == .cloud, APIConfig.shared.isConfigured, !transcript.isEmpty,
            let summarized = try? await OpenAIService.shared.summarize(transcript: transcript) {
             note.summary = summarized.summary
             if !summarized.title.isEmpty {
@@ -222,6 +240,7 @@ public final class LiveRecordingSession: NSObject, ObservableObject {
 
         noteStore.updateNote(note)
         self.noteID = nil
+        activeTranscriptionMode = nil
         return (note, transcriptionFailed)
     }
 
